@@ -1,0 +1,146 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{fontspec}
+\setmainfont{Arial}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{xcolor,fancyhdr,url}
+\usepackage{enumitem}
+\definecolor{azul}{HTML}{17324D}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{gray} Guía 1 · INFB6074 · 2026-2}
+\fancyhead[R]{\small\color{gray} Informe integrador}
+\fancyfoot[C]{\thepage}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+
+\begin{document}
+\begin{center}
+{\LARGE\bfseries\color{azul} Guía N° 1: Boot de Micro S.O. en QEMU}\par\vspace{4pt}
+{\large Informe integrador -- Fases 1, 2 y 3}\par\vspace{4pt}
+INFB6074 -- Infraestructura para Ciencia de Datos -- UTEM -- 2026-2
+\end{center}
+
+\section{Propósito y entorno}
+Esta guía propone construir, en tres etapas progresivas, un flujo completo de arranque de bajo
+nivel: desde un sector BIOS mínimo que dibuja una imagen en modo texto, pasando por un
+arranque en dos etapas con interacción por teclado, hasta un kernel en C que corre en modo
+protegido de 32 bits y dibuja una imagen propia en un framebuffer gráfico. El propósito
+formativo es comprender, de manera práctica, cómo se articulan código fuente, ensamblado,
+artefacto binario, arranque y virtualización -- la base conceptual sobre la que luego se
+apoyan máquinas virtuales, contenedores e imágenes ejecutables.
+
+\textbf{Entorno de desarrollo:} Windows 11 x64. Ensamblador NASM 3.02. Emulador QEMU 11.1.2
+(\texttt{qemu-system-i386}). Compilador \texttt{mingw-w64-ucrt-x86\_64-gcc} 16.2.0 (con
+soporte \texttt{-m32}), usado únicamente en la Fase 3. Todas las herramientas se obtuvieron
+del repositorio oficial de MSYS2 (\texttt{pacman}). Control de versiones con Git; repositorio
+personal alojado en GitHub.
+
+\section{Fase 1: sector de arranque e imagen ASCII}
+Se implementó un sector de arranque BIOS de 512 bytes (\texttt{fase-1/boot\_f1.asm}) que usa
+la interrupción \texttt{int 0x10} (función \texttt{AH=0x0E}, modo teletipo) para dibujar, en
+modo texto 80$\times$25, una adaptación del escudo UTEM hecha con caracteres ASCII. El flujo
+de construcción es \texttt{nasm -f bin boot\_f1.asm -o boot\_f1.bin}, seguido de QEMU
+apuntando ese binario como disquete en bruto (\texttt{-drive format=raw,if=floppy}).
+Se verificó que el
+binario mide exactamente 512 bytes y que sus dos últimos bytes son la firma de arranque
+\texttt{55 AA}, requisito que la BIOS exige para reconocer el sector como arrancable. El
+arranque se probó visualmente en QEMU: el dibujo completo aparece en pantalla y el sistema
+queda detenido (\texttt{cli; hlt}) de forma controlada.
+
+\section{Fase 2: arranque en dos etapas e interacción}
+La Fase 2 amplía el flujo anterior en dos binarios: un sector de arranque de 512 bytes
+(\texttt{boot\_f2.asm}) que usa \texttt{int 0x13} con lectura CHS para cargar una segunda
+etapa de 2048 bytes (\texttt{stage2\_f2.asm}) desde el sector 2 del disco hacia la dirección
+física \texttt{0x8000}, y le transfiere el control con un salto lejano. La segunda etapa
+conserva el logo ASCII y agrega un menú de tres opciones leído con \texttt{int 0x16}
+(\texttt{AH=0x00}): dos opciones informativas (NASM y QEMU) y una para detener el sistema;
+cualquier otra tecla produce un mensaje de entrada no válida y vuelve a mostrar el menú, sin
+bloquear el sistema.
+
+\textbf{Problema encontrado y corregido.} La primera versión reutilizó, para los mensajes del
+menú, la misma rutina que dibuja el logo -- una rutina que reposiciona manualmente el cursor
+en cada salto de línea. Como los mensajes normales ya incluían retorno de carro y salto de
+línea (\texttt{13,10}) para que la BIOS los maneje en modo teletipo, esa reposición manual
+pisaba el cursor y cortaba el primer carácter de cada línea (por ejemplo, \emph{"Seleccione"}
+aparecía como \emph{"eleccione"}). La corrección separó dos rutinas: una con control manual de
+cursor, sólo para el dibujo, y otra en modo teletipo puro para el resto del texto. Se verificó
+con capturas automatizadas (enviando teclas y volcando pantalla a través del monitor de QEMU)
+que los cinco casos de prueba -- arranque, opción 1, opción 2, entrada no válida y detención --
+funcionan correctamente.
+
+\section{Fase 3: cargador propio, kernel C y framebuffer gráfico}
+La Fase 3 reutiliza la cadena de arranque propia en lugar de GRUB + Multiboot2, ya que este
+equipo no tiene instalados \texttt{grub-mkrescue} ni \texttt{xorriso}. El sector de arranque
+(\texttt{boot\_f3.asm}) y un cargador en modo real de 2048 bytes (\texttt{loader\_f3.asm})
+cargan, con lectura extendida por LBA (\texttt{int 0x13}, \texttt{AH=0x42}), tanto el propio
+cargador como el kernel compilado (de aproximadamente 28~KB), superando el límite de 18
+sectores por pista de la lectura CHS clásica.
+
+Antes de activar el modo gráfico, el cargador consulta la información del modo VBE
+(\texttt{int 0x10}, \texttt{AX=0x4F01}) y la guarda en la dirección física fija
+\texttt{0x9000}; recién después activa el modo \texttt{0x112} (640$\times$480, con buffer
+lineal). Luego habilita A20, construye una tabla de descriptores global plana de 4~GB y
+conmuta a modo protegido de 32 bits, saltando finalmente a la dirección física
+\texttt{0x20000}, donde corre el kernel en C.
+
+El kernel (\texttt{kernel.c}) interpreta el bloque de información VBE con una estructura que
+replica sus offsets oficiales: dirección física del framebuffer, bytes por línea, resolución,
+bits por píxel y posición de cada canal de color. \textbf{Hallazgo relevante:} se asumió
+inicialmente que el modo \texttt{0x112} entregaría 32 bits por píxel; al inspeccionar en vivo
+el bloque real (con el monitor de QEMU) se confirmó que en este equipo entrega 24 bits por
+píxel. La primera versión del kernel validaba \texttt{bpp == 32} y, al no cumplirse, omitía
+todo el dibujo sin mostrar error (pantalla negra). La corrección dejó de asumir un formato
+fijo: el kernel compone cada píxel usando las posiciones de color que realmente informa la
+BIOS y escribe 3 o 4 bytes según corresponda -- la validación de parámetros que exige la guía
+antes de escribir en memoria no es un formalismo: sin ella, el kernel escribía con un formato
+incorrecto.
+
+El kernel dibuja primero un color sólido uniforme (azul institucional UTEM) para confirmar que
+el framebuffer responde, y luego superpone una imagen propia de 96$\times$64 píxeles (archivo
+\texttt{logo\_f3.png} en \texttt{assets/original}), convertida a píxeles RGB sin compresión
+mediante un script documentado (\texttt{convertir\_imagen.py} en \texttt{scripts}) y embebida
+como arreglo de C. El
+resultado se verificó visualmente en QEMU: fondo azul uniforme con el emblema centrado,
+colores y proporciones correctos.
+
+\section{Pruebas, problemas, limitaciones, reflexión y referencias}
+
+\textbf{Pruebas.} Cada fase incluye su propia tabla de pruebas con caso, acción, resultado
+esperado, resultado observado y evidencia (ver los \texttt{README.md} de \texttt{fase-1},
+\texttt{fase-2} y \texttt{fase-3}). En las fases 2 y 3 las pruebas se automatizaron enviando
+comandos al monitor de QEMU (\texttt{sendkey}, \texttt{screendump}), lo que permite reproducir
+exactamente la misma secuencia de verificación.
+
+\textbf{Problemas resueltos.} (1) En la Fase 2, una rutina de impresión mal reutilizada cortaba
+texto del menú. (2) En la Fase 3, la lectura CHS clásica no alcanza para un kernel de varias
+decenas de sectores -- se migró a lectura extendida por LBA, y se descubrió que la BIOS de
+disquete emulada por QEMU no la soporta, por lo que la imagen final se monta como disco IDE.
+(3) También en la Fase 3, una suposición incorrecta sobre el formato de píxel (32 en vez de 24
+bpp) dejaba la pantalla en negro sin aviso; se corrigió validando y usando el formato real
+informado por la BIOS.
+
+\textbf{Limitaciones.} El kernel de la Fase 3 sólo soporta framebuffers de 24 o 32 bpp, no
+implementa teclado ni interrupciones, y su tamaño máximo está acotado por una constante
+documentada en el cargador (con verificación explícita en el script de build, sin truncar
+silenciosamente). Ninguna de las tres fases implementa un sistema de archivos ni gestión de
+memoria más allá de lo estrictamente necesario para arrancar y dibujar.
+
+\textbf{Reflexión.} Las tres fases hacen tangible la relación entre hardware, firmware (BIOS),
+virtualización y software: cada capa impone restricciones concretas (tamaño de sector, límites
+de interrupciones BIOS, formatos de color reales en vez de asumidos) que sólo se descubren
+ejecutando y depurando en un entorno emulado y controlado, no sólo leyendo documentación. Esa
+disciplina de validar en tiempo de ejecución -- en vez de asumir -- es exactamente la misma que
+sostiene la reproducibilidad en infraestructura de datos a mayor escala: máquinas virtuales,
+contenedores e imágenes ejecutables.
+
+\textbf{Referencias.}
+\begin{itemize}[nosep]
+\item QEMU Project. \url{https://www.qemu.org/} y \url{https://www.qemu.org/docs/master/}
+\item NASM Documentation. \url{https://www.nasm.us/doc/}
+\item OSDev Wiki (Bootloader, BIOS, VESA/VBE). \url{https://wiki.osdev.org/}
+\item GitHub Docs. \url{https://docs.github.com/}
+\end{itemize}
+
+\end{document}
