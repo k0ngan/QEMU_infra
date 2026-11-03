@@ -32,8 +32,6 @@ personal de entrega.
   cargador propio (sin GRUB), modo gráfico VBE 640×480, imagen propia convertida a píxeles.
   Evidencia: `fase-3/evidencias/arranque_f3-qemu.png`.
 
-Para grabar la demostración, ver el [guion de video](evidencias/guion_video_fase1.md) (cubre
-la Fase 1; falta ampliarlo con las Fases 2 y 3 antes de grabar el video único de la guía).
 
 ## Reconstrucción desde cero
 
