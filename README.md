@@ -12,10 +12,6 @@ Entrega: 04 de noviembre de 2026, 23:59 hrs. Presentación: 05 de noviembre de 2
 | [Fase 2](fase-2/README.md) | Implementada y probada en QEMU | Arranque en dos etapas, menú interactivo |
 | [Fase 3](fase-3/README.md) | Implementada y probada en QEMU | Kernel C freestanding, modo gráfico VBE, imagen propia |
 
-Pendiente: `informe_guia1.pdf` (máx. 5 páginas, integra las tres fases), vídeo único de
-presentación (`evidencias/video_guia1.mp4`), repositorio personal en GitHub y entrega del
-enlace en el canal indicado.
-
 ## Herramientas
 
 Se usaron NASM, QEMU y `mingw-w64-ucrt-x86_64-gcc` (para la Fase 3), todos disponibles en
